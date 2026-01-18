@@ -28,6 +28,7 @@ Key Features:
     • Root Detection Bypass- Bypass root detection in banking/security apps
     • Flutter SSL Bypass   - Specialized bypass for Flutter/Dart applications
     • Custom Scripts       - Load and execute your own Frida scripts
+    • Frida CodeShare      - Run scripts directly from Frida CodeShare
     • 3-Layer Validation   - Robust Frida server management
     • PID-based Attach     - Reliable attachment using process ID
     • Smart Lifecycle      - Idempotent server management
@@ -50,7 +51,7 @@ __title__ = "Auto Frida"
 __version__ = "1.0"
 __author__ = "Omkar Mirkute"
 __license__ = "MIT"
-__copyright__ = "Copyright 2026 Omkar Mirkute"
+__copyright__ = "Copyright 2024 Omkar Mirkute"
 
 import subprocess
 import sys
@@ -62,7 +63,7 @@ import lzma
 import shutil
 import logging
 from pathlib import Path
-from typing import Optional, List, Tuple, Dict
+from typing import Optional, List, Tuple, Dict, Union
 from dataclasses import dataclass
 from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
@@ -167,7 +168,7 @@ class AutoFrida:
     4. Smart Frida server lifecycle with 3-layer validation
     5. App enumeration
     6. Target selection
-    7. Script management
+    7. Script management (local + CodeShare)
     8. Script execution (Spawn/Attach modes)
     """
     
@@ -189,6 +190,8 @@ class AutoFrida:
     
     # Navigation constants
     GO_BACK = "GO_BACK"
+    EXIT_PROGRAM = "EXIT_PROGRAM"
+    CODESHARE_PREFIX = "codeshare:"
     
     def __init__(self):
         """Initialize Auto Frida"""
@@ -200,6 +203,14 @@ class AutoFrida:
         # Log startup
         logger.info(f"Auto Frida v{__version__} initialized")
         logger.info(f"Created by: {__author__}")
+    
+    def _exit_program(self):
+        """Exit the program gracefully"""
+        print(f"\n{Colors.GREEN}{'═' * 60}{Colors.END}")
+        print(f"{Colors.GREEN}  Auto Frida Session Complete - Goodbye!{Colors.END}")
+        print(f"{Colors.GREEN}  Created by: {__author__}{Colors.END}")
+        print(f"{Colors.GREEN}{'═' * 60}{Colors.END}")
+        sys.exit(0)
     
     def _ensure_directories(self):
         """Create necessary directories"""
@@ -315,7 +326,7 @@ class AutoFrida:
 ║                                                                          ║
 ║   {Colors.PURPLE}▸ Auto Frida Installation    ▸ SSL Pinning Bypass{Colors.CYAN}                    ║
 ║   {Colors.PURPLE}▸ Root Detection Bypass      ▸ Flutter SSL Bypass{Colors.CYAN}                    ║
-║   {Colors.PURPLE}▸ Custom Script Support      ▸ 3-Layer Validation{Colors.CYAN}                    ║
+║   {Colors.PURPLE}▸ Frida CodeShare Support    ▸ Custom Script Support{Colors.CYAN}                 ║
 ║                                                                          ║
 ╚══════════════════════════════════════════════════════════════════════════╝{Colors.END}
 """
@@ -1153,34 +1164,52 @@ class AutoFrida:
         return apps_to_show
     
     # ═══════════════════════════════════════════════════════════════════════════
-    # PHASE 6: TARGET SELECTION
+    # PHASE 6: TARGET SELECTION (with back and exit options)
     # ═══════════════════════════════════════════════════════════════════════════
     
     def select_target(self) -> Optional[AppInfo]:
-        """Prompt user to select target app with input validation"""
+        """Prompt user to select target app with input validation and back option"""
         while True:
             print(f"\n{Colors.CYAN}Filter options:{Colors.END}")
             print(f"  1. Show all apps")
             print(f"  2. Show only running apps")
+            print(f"  {Colors.PURPLE}B. Go back (refresh app list){Colors.END}")
+            print(f"  {Colors.RED}X. Exit{Colors.END}")
             
             filter_choice = self.get_valid_input(
                 f"{Colors.YELLOW}> {Colors.END}",
-                ['1', '2']
+                ['1', '2', 'b', 'x']
             )
+            
+            if filter_choice.lower() == 'b':
+                print(f"{Colors.PURPLE}[←] Refreshing app list...{Colors.END}")
+                self.enumerate_apps()
+                continue
+            
+            if filter_choice.lower() == 'x':
+                self._exit_program()
             
             filter_running = filter_choice == '2'
             apps_to_select = self.display_apps(filter_running=filter_running)
             
             if not apps_to_select:
                 print(f"{Colors.YELLOW}[!] No apps found with current filter{Colors.END}")
+                print(f"{Colors.CYAN}Returning to filter options...{Colors.END}")
                 continue
             
-            print(f"\n{Colors.CYAN}Enter app number (1-{len(apps_to_select)}) or package identifier:{Colors.END}")
+            print(f"\n{Colors.CYAN}Enter app number (1-{len(apps_to_select)}), package identifier,{Colors.END}")
+            print(f"{Colors.CYAN}'B' to go back to filter options, or 'X' to exit:{Colors.END}")
             selection = self.safe_input(f"{Colors.YELLOW}> {Colors.END}")
             
             if not selection:
                 print(f"{Colors.RED}[!] Invalid option. Please enter a valid selection{Colors.END}")
                 continue
+            
+            if selection.lower() == 'b':
+                continue
+            
+            if selection.lower() == 'x':
+                self._exit_program()
             
             try:
                 idx = int(selection)
@@ -1213,8 +1242,173 @@ class AutoFrida:
             print(f"{Colors.RED}[!] App not found: {selection}{Colors.END}")
     
     # ═══════════════════════════════════════════════════════════════════════════
-    # PHASE 7: SCRIPT MANAGEMENT
+    # PHASE 7: SCRIPT MANAGEMENT (with CodeShare and exit option)
     # ═══════════════════════════════════════════════════════════════════════════
+    
+    def show_codeshare_examples(self):
+        """Display popular Frida CodeShare scripts"""
+        print(f"\n{Colors.CYAN}Popular Frida CodeShare Scripts:{Colors.END}")
+        print(f"{Colors.CYAN}{'─' * 60}{Colors.END}")
+        
+        examples = [
+            ("pcipolloni/universal-android-ssl-pinning-bypass-with-frida", "Universal SSL Pinning Bypass"),
+            ("dzonerzy/fridantiroot", "Root Detection Bypass"),
+            ("akabe1/frida-multiple-unpinning", "Multiple SSL Unpinning"),
+            ("masbog/frida-android-unpinning-ssl", "Android SSL Unpinning"),
+            ("sowdust/universal-android-ssl-pinning-bypass-2", "Universal SSL Bypass v2"),
+        ]
+        
+        for script_id, description in examples:
+            print(f"  {Colors.GREEN}•{Colors.END} {script_id}")
+            print(f"    {Colors.YELLOW}{description}{Colors.END}")
+        
+        print(f"\n{Colors.CYAN}Browse more at: https://codeshare.frida.re/{Colors.END}")
+    
+    def validate_codeshare_script(self, script_name: str) -> Optional[str]:
+        """
+        Validate and normalize a Frida CodeShare script name
+        
+        Args:
+            script_name: The script name in format 'author/script-name'
+            
+        Returns:
+            Normalized script name if valid, or None if invalid format
+        """
+        # Normalize script name - remove @ prefix if present and trailing slashes
+        script_name = script_name.strip()
+        if script_name.startswith('@'):
+            script_name = script_name[1:]
+        script_name = script_name.rstrip('/')
+        
+        # Validate format: should be 'author/script-name'
+        if '/' not in script_name:
+            print(f"{Colors.RED}[!] Invalid format: {script_name}{Colors.END}")
+            print(f"{Colors.YELLOW}    Must be in format: author/script-name{Colors.END}")
+            print(f"{Colors.YELLOW}    Example: pcipolloni/universal-android-ssl-pinning-bypass-with-frida{Colors.END}")
+            return None
+        
+        parts = script_name.split('/')
+        if len(parts) < 2 or not parts[0] or not parts[1]:
+            print(f"{Colors.RED}[!] Invalid format: {script_name}{Colors.END}")
+            print(f"{Colors.YELLOW}    Must be in format: author/script-name{Colors.END}")
+            return None
+        
+        print(f"{Colors.GREEN}[✓] CodeShare script: {script_name}{Colors.END}")
+        return script_name
+    
+    def _handle_codeshare_selection(self) -> Optional[str]:
+        """
+        Handle Frida CodeShare script selection
+        
+        Returns:
+            CodeShare script identifier (format: codeshare:author/script-name) or GO_BACK
+        """
+        self.show_codeshare_examples()
+        
+        while True:
+            print(f"\n{Colors.CYAN}Enter CodeShare script name (e.g., author/script-name):{Colors.END}")
+            print(f"{Colors.CYAN}'B' to go back, 'X' to exit{Colors.END}")
+            
+            script_name = self.safe_input(f"{Colors.YELLOW}> {Colors.END}")
+            
+            if not script_name:
+                print(f"{Colors.RED}[!] Please enter a script name{Colors.END}")
+                continue
+            
+            if script_name.lower() == 'b':
+                return self.GO_BACK
+            
+            if script_name.lower() == 'x':
+                self._exit_program()
+            
+            # Validate the script name format
+            validated_name = self.validate_codeshare_script(script_name)
+            
+            if validated_name:
+                # Return with codeshare prefix to identify it later
+                return f"{self.CODESHARE_PREFIX}{validated_name}"
+            else:
+                print(f"\n{Colors.CYAN}Would you like to try another script? (Y/N):{Colors.END}")
+                retry = self.get_valid_input(
+                    f"{Colors.YELLOW}> {Colors.END}",
+                    ['y', 'n', 'yes', 'no']
+                ).lower()
+                
+                if retry in ['n', 'no']:
+                    return self.GO_BACK
+    
+    def _handle_local_script(self) -> Optional[Path]:
+        """
+        Handle local script file selection
+        
+        Returns:
+            Path to local script file or GO_BACK
+        """
+        while True:
+            print(f"\n{Colors.CYAN}Enter full path to script (.js file):{Colors.END}")
+            print(f"{Colors.CYAN}'B' to go back, 'X' to exit{Colors.END}")
+            
+            custom_path = self.safe_input(f"{Colors.YELLOW}> {Colors.END}")
+            
+            if not custom_path:
+                print(f"{Colors.RED}[!] Please enter a valid path{Colors.END}")
+                continue
+            
+            if custom_path.lower() == 'b':
+                return self.GO_BACK
+            
+            if custom_path.lower() == 'x':
+                self._exit_program()
+            
+            custom_path = Path(custom_path.strip('"').strip("'"))
+            
+            if custom_path.exists() and custom_path.suffix == '.js':
+                print(f"{Colors.GREEN}[✓] Using script: {custom_path}{Colors.END}")
+                return custom_path
+            elif not custom_path.exists():
+                print(f"{Colors.RED}[!] File not found: {custom_path}{Colors.END}")
+            else:
+                print(f"{Colors.RED}[!] Not a .js file: {custom_path}{Colors.END}")
+    
+    def _handle_custom_script_menu(self) -> Union[Path, str, None]:
+        """
+        Handle custom script submenu with CodeShare and local file options
+        
+        Returns:
+            Path to local script, CodeShare identifier (codeshare:author/script), GO_BACK, or None
+        """
+        while True:
+            print(f"\n{Colors.CYAN}Custom Script Options:{Colors.END}")
+            print(f"{Colors.CYAN}{'─' * 50}{Colors.END}")
+            print(f"  1. {Colors.GREEN}Frida CodeShare{Colors.END} - Run script from codeshare.frida.re")
+            print(f"  2. {Colors.YELLOW}Local Script{Colors.END} - Enter path to local .js file")
+            print(f"  {Colors.PURPLE}B. Go back to script selection{Colors.END}")
+            print(f"  {Colors.RED}X. Exit{Colors.END}")
+            
+            choice = self.get_valid_input(
+                f"\n{Colors.YELLOW}> {Colors.END}",
+                ['1', '2', 'b', 'x']
+            )
+            
+            if choice.lower() == 'b':
+                return self.GO_BACK
+            
+            if choice.lower() == 'x':
+                self._exit_program()
+            
+            if choice == '1':
+                # Frida CodeShare
+                result = self._handle_codeshare_selection()
+                if result == self.GO_BACK:
+                    continue
+                return result
+            
+            elif choice == '2':
+                # Local script
+                result = self._handle_local_script()
+                if result == self.GO_BACK:
+                    continue
+                return result
     
     def get_available_scripts(self) -> List[Dict]:
         """Get list of available Frida scripts"""
@@ -1246,8 +1440,13 @@ class AutoFrida:
         
         return scripts
     
-    def select_script(self) -> Optional[Path]:
-        """Prompt user to select a Frida script"""
+    def select_script(self) -> Union[Path, str, None]:
+        """
+        Prompt user to select a Frida script
+        
+        Returns:
+            Path to local script, CodeShare identifier (codeshare:author/script), or None for go back
+        """
         scripts = self.get_available_scripts()
         
         while True:
@@ -1260,15 +1459,16 @@ class AutoFrida:
                 color = Colors.GREEN if script_path.exists() else Colors.RED
                 print(f"  {i}. {script['name']} {color}[{exists}]{Colors.END}")
             
-            print(f"\n  {Colors.YELLOW}C. Enter custom script path{Colors.END}")
+            print(f"\n  {Colors.YELLOW}C. Custom script options (CodeShare / Local){Colors.END}")
             print(f"  {Colors.PURPLE}B. Go back to app selection{Colors.END}")
+            print(f"  {Colors.RED}X. Exit{Colors.END}")
             
-            print(f"\n{Colors.CYAN}Select script (1-{len(scripts)}), 'C' for custom, or 'B' to go back:{Colors.END}")
+            print(f"\n{Colors.CYAN}Select script (1-{len(scripts)}), 'C' for custom, 'B' to go back, 'X' to exit:{Colors.END}")
             
             is_num, value = self.get_numeric_input(
                 f"{Colors.YELLOW}> {Colors.END}",
                 1, len(scripts),
-                allow_special=['b', 'c']
+                allow_special=['b', 'c', 'x']
             )
             
             if not is_num:
@@ -1276,26 +1476,14 @@ class AutoFrida:
                     print(f"{Colors.PURPLE}[←] Going back to app selection...{Colors.END}")
                     return None
                 
+                elif value == 'x':
+                    self._exit_program()
+                
                 elif value == 'c':
-                    while True:
-                        print(f"\n{Colors.CYAN}Enter full path to script (or 'B' to go back):{Colors.END}")
-                        custom_path = self.safe_input(f"{Colors.YELLOW}> {Colors.END}")
-                        
-                        if not custom_path:
-                            print(f"{Colors.RED}[!] Please enter a valid path{Colors.END}")
-                            continue
-                        
-                        if custom_path.lower() == 'b':
-                            break
-                        
-                        custom_path = Path(custom_path.strip('"').strip("'"))
-                        
-                        if custom_path.exists() and custom_path.suffix == '.js':
-                            print(f"{Colors.GREEN}[✓] Using custom script: {custom_path}{Colors.END}")
-                            return custom_path
-                        else:
-                            print(f"{Colors.RED}[!] Script not found or not a .js file: {custom_path}{Colors.END}")
-                    continue
+                    result = self._handle_custom_script_menu()
+                    if result == self.GO_BACK:
+                        continue
+                    return result
             else:
                 script_path = self.SCRIPTS_DIR / scripts[value - 1]['file']
                 if script_path.exists():
@@ -1303,11 +1491,11 @@ class AutoFrida:
                     return script_path
                 else:
                     print(f"{Colors.RED}[!] Script file not found: {script_path}{Colors.END}")
-                    print(f"{Colors.YELLOW}    Create the script or use custom path (C){Colors.END}")
+                    print(f"{Colors.YELLOW}    Create the script or use custom option (C){Colors.END}")
                     continue
     
     # ═══════════════════════════════════════════════════════════════════════════
-    # PHASE 8: SCRIPT EXECUTION (FIXED ATTACH/SPAWN)
+    # PHASE 8: SCRIPT EXECUTION (with CodeShare support)
     # ═══════════════════════════════════════════════════════════════════════════
     
     def _get_app_pid(self, identifier: str) -> Optional[int]:
@@ -1429,8 +1617,21 @@ class AutoFrida:
             print(f"{Colors.YELLOW}    [!] Error launching app: {e}{Colors.END}")
             return None
     
-    def execute_script(self, target: AppInfo, script_path: Path) -> bool:
-        """Execute Frida script against target app"""
+    def execute_script(self, target: AppInfo, script: Union[Path, str]) -> bool:
+        """
+        Execute Frida script against target app
+        
+        Supports both local scripts (Path) and CodeShare scripts (string with codeshare: prefix)
+        """
+        # Check if this is a CodeShare script
+        is_codeshare = isinstance(script, str) and script.startswith(self.CODESHARE_PREFIX)
+        
+        if is_codeshare:
+            codeshare_name = script[len(self.CODESHARE_PREFIX):]
+            print(f"\n{Colors.GREEN}[*] Using Frida CodeShare: {codeshare_name}{Colors.END}")
+        else:
+            print(f"\n{Colors.GREEN}[*] Using local script: {script}{Colors.END}")
+        
         while True:
             current_pid = self._get_app_pid(target.identifier)
             
@@ -1438,6 +1639,7 @@ class AutoFrida:
             print(f"  1. Spawn (launch app fresh with injection)")
             print(f"  2. Attach (connect to running app)")
             print(f"  {Colors.PURPLE}B. Go back to script selection{Colors.END}")
+            print(f"  {Colors.RED}X. Exit{Colors.END}")
             
             if current_pid:
                 print(f"\n{Colors.GREEN}    ℹ App is currently running (PID: {current_pid}){Colors.END}")
@@ -1451,64 +1653,123 @@ class AutoFrida:
             is_num, value = self.get_numeric_input(
                 f"{Colors.YELLOW}> {Colors.END}",
                 1, 2,
-                allow_special=['b']
+                allow_special=['b', 'x']
             )
             
-            if not is_num and value == 'b':
-                print(f"{Colors.PURPLE}[←] Going back to script selection...{Colors.END}")
-                return False
+            if not is_num:
+                if value == 'b':
+                    print(f"{Colors.PURPLE}[←] Going back to script selection...{Colors.END}")
+                    return False
+                elif value == 'x':
+                    self._exit_program()
             
             mode = str(value)
             
-            # SPAWN MODE
-            if mode == '1':
-                if not self.device.is_rooted:
-                    print(f"\n{Colors.YELLOW}[!] Warning: Spawn mode on non-rooted device{Colors.END}")
-                    print(f"{Colors.YELLOW}    This may fail with 'need Gadget' error{Colors.END}")
-                    print(f"{Colors.CYAN}    Continue anyway? (Y/N):{Colors.END}")
-                    
-                    confirm = self.get_valid_input(
-                        f"{Colors.YELLOW}> {Colors.END}",
-                        ['y', 'n', 'yes', 'no']
-                    ).lower()
-                    
-                    if confirm in ['n', 'no']:
-                        continue
+            # Build command based on script type
+            if is_codeshare:
+                codeshare_name = script[len(self.CODESHARE_PREFIX):]
                 
-                if current_pid:
-                    print(f"\n{Colors.YELLOW}[!] App is already running (PID: {current_pid}){Colors.END}")
-                    print(f"{Colors.BLUE}[*] Killing app before spawn...{Colors.END}")
+                # SPAWN MODE with CodeShare
+                if mode == '1':
+                    if not self.device.is_rooted:
+                        print(f"\n{Colors.YELLOW}[!] Warning: Spawn mode on non-rooted device{Colors.END}")
+                        print(f"{Colors.YELLOW}    This may fail with 'need Gadget' error{Colors.END}")
+                        print(f"{Colors.CYAN}    Continue anyway? (Y/N):{Colors.END}")
+                        
+                        confirm = self.get_valid_input(
+                            f"{Colors.YELLOW}> {Colors.END}",
+                            ['y', 'n', 'yes', 'no']
+                        ).lower()
+                        
+                        if confirm in ['n', 'no']:
+                            continue
                     
-                    if not self._kill_app(target.identifier):
-                        print(f"{Colors.YELLOW}[!] Could not kill app - spawn may fail{Colors.END}")
+                    if current_pid:
+                        print(f"\n{Colors.YELLOW}[!] App is already running (PID: {current_pid}){Colors.END}")
+                        print(f"{Colors.BLUE}[*] Killing app before spawn...{Colors.END}")
+                        
+                        if not self._kill_app(target.identifier):
+                            print(f"{Colors.YELLOW}[!] Could not kill app - spawn may fail{Colors.END}")
+                        
+                        time.sleep(2)
                     
-                    time.sleep(2)
+                    cmd = [
+                        'frida', '-U',
+                        '--codeshare', codeshare_name,
+                        '-f', target.identifier
+                    ]
+                    print(f"\n{Colors.CYAN}[*] Spawning {target.identifier} with CodeShare script...{Colors.END}")
                 
-                cmd = [
-                    'frida', '-U',
-                    '-f', target.identifier,
-                    '-l', str(script_path)
-                ]
-                print(f"\n{Colors.CYAN}[*] Spawning {target.identifier}...{Colors.END}")
-            
-            # ATTACH MODE (PID-based)
-            else:
-                if not current_pid:
-                    print(f"\n{Colors.YELLOW}[!] App not running. Starting it first...{Colors.END}")
-                    current_pid = self._launch_app(target.identifier)
-                    
+                # ATTACH MODE with CodeShare
+                else:
                     if not current_pid:
-                        print(f"{Colors.RED}[!] Failed to start app{Colors.END}")
-                        print(f"{Colors.CYAN}    Try starting the app manually and retry{Colors.END}")
-                        continue
+                        print(f"\n{Colors.YELLOW}[!] App not running. Starting it first...{Colors.END}")
+                        current_pid = self._launch_app(target.identifier)
+                        
+                        if not current_pid:
+                            print(f"{Colors.RED}[!] Failed to start app{Colors.END}")
+                            print(f"{Colors.CYAN}    Try starting the app manually and retry{Colors.END}")
+                            continue
+                    
+                    cmd = [
+                        'frida', '-U',
+                        '--codeshare', codeshare_name,
+                        '-p', str(current_pid)
+                    ]
+                    print(f"\n{Colors.CYAN}[*] Attaching to {target.identifier} (PID: {current_pid}) with CodeShare script...{Colors.END}")
+            
+            else:
+                # Local script execution
+                script_path = script
                 
-                # FIXED: Use PID for attachment (reliable)
-                cmd = [
-                    'frida', '-U',
-                    '-p', str(current_pid),
-                    '-l', str(script_path)
-                ]
-                print(f"\n{Colors.CYAN}[*] Attaching to {target.identifier} (PID: {current_pid})...{Colors.END}")
+                # SPAWN MODE with local script
+                if mode == '1':
+                    if not self.device.is_rooted:
+                        print(f"\n{Colors.YELLOW}[!] Warning: Spawn mode on non-rooted device{Colors.END}")
+                        print(f"{Colors.YELLOW}    This may fail with 'need Gadget' error{Colors.END}")
+                        print(f"{Colors.CYAN}    Continue anyway? (Y/N):{Colors.END}")
+                        
+                        confirm = self.get_valid_input(
+                            f"{Colors.YELLOW}> {Colors.END}",
+                            ['y', 'n', 'yes', 'no']
+                        ).lower()
+                        
+                        if confirm in ['n', 'no']:
+                            continue
+                    
+                    if current_pid:
+                        print(f"\n{Colors.YELLOW}[!] App is already running (PID: {current_pid}){Colors.END}")
+                        print(f"{Colors.BLUE}[*] Killing app before spawn...{Colors.END}")
+                        
+                        if not self._kill_app(target.identifier):
+                            print(f"{Colors.YELLOW}[!] Could not kill app - spawn may fail{Colors.END}")
+                        
+                        time.sleep(2)
+                    
+                    cmd = [
+                        'frida', '-U',
+                        '-f', target.identifier,
+                        '-l', str(script_path)
+                    ]
+                    print(f"\n{Colors.CYAN}[*] Spawning {target.identifier}...{Colors.END}")
+                
+                # ATTACH MODE with local script
+                else:
+                    if not current_pid:
+                        print(f"\n{Colors.YELLOW}[!] App not running. Starting it first...{Colors.END}")
+                        current_pid = self._launch_app(target.identifier)
+                        
+                        if not current_pid:
+                            print(f"{Colors.RED}[!] Failed to start app{Colors.END}")
+                            print(f"{Colors.CYAN}    Try starting the app manually and retry{Colors.END}")
+                            continue
+                    
+                    cmd = [
+                        'frida', '-U',
+                        '-p', str(current_pid),
+                        '-l', str(script_path)
+                    ]
+                    print(f"\n{Colors.CYAN}[*] Attaching to {target.identifier} (PID: {current_pid})...{Colors.END}")
             
             # Execute Frida
             print(f"\n{Colors.PURPLE}[*] Command: {' '.join(cmd)}{Colors.END}")
@@ -1566,7 +1827,7 @@ class AutoFrida:
                 elif retry_choice == 2:
                     return False
                 else:
-                    return True
+                    self._exit_program()
     
     # ═══════════════════════════════════════════════════════════════════════════
     # MAIN EXECUTION
@@ -1670,11 +1931,7 @@ class AutoFrida:
                 elif next_action == 2:
                     break
                 else:
-                    print(f"\n{Colors.GREEN}{'═' * 60}{Colors.END}")
-                    print(f"{Colors.GREEN}  Auto Frida Session Complete - Goodbye!{Colors.END}")
-                    print(f"{Colors.GREEN}  Created by: {__author__}{Colors.END}")
-                    print(f"{Colors.GREEN}{'═' * 60}{Colors.END}")
-                    return
+                    self._exit_program()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
