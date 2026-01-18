@@ -35,7 +35,7 @@
 [Usage](#-quick-start) •
 [Scripts](#-built-in-scripts) •
 [CodeShare](#-frida-codeshare-integration) •
-[Author](#-author)
+[Author](#%E2%80%8D-author)
 
 </div>
 
