@@ -1,0 +1,30 @@
+[
+    {
+        "name": "Universal SSL Pinning Bypass",
+        "file": "ssl_pinning_bypass.js",
+        "type": "java",
+        "description": "Bypasses SSL pinning for OkHttp, TrustManager, WebView, and HttpsURLConnection",
+        "supports": ["java", "native"]
+    },
+    {
+        "name": "Root Detection Bypass",
+        "file": "root_bypass.js",
+        "type": "java",
+        "description": "Bypasses common root detection methods including RootBeer library",
+        "supports": ["java"]
+    },
+    {
+        "name": "Flutter SSL Pinning Bypass",
+        "file": "flutter_ssl_bypass.js",
+        "type": "native",
+        "description": "Bypasses SSL pinning in Flutter apps using BoringSSL",
+        "supports": ["flutter", "native"]
+    },
+    {
+        "name": "Anti Debug / Emulator Bypass",
+        "file": "anti_debug_bypass.js",
+        "type": "mixed",
+        "description": "Bypasses debugger detection, emulator detection, and Frida detection",
+        "supports": ["java", "native"]
+    }
+]
