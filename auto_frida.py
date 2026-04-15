@@ -21,7 +21,7 @@ import threading
 import queue
 import uuid
 from pathlib import Path
-from typing import Optional, List, Tuple, Dict, Set
+from typing import Optional, List, Tuple, Dict, Set, NoReturn
 from dataclasses import dataclass, field
 from datetime import datetime
 from urllib.request import urlopen, Request
@@ -1047,7 +1047,7 @@ class AutoAnalyzerModule:
         except Exception as exc:
             logger.error("Frida attach error: %s", exc)
             print(f"\n{Colors.RED}[!] Error: {exc}{Colors.END}")
-            return events if events else []
+            return events if events else None
         finally:
             stop_event.set()
             _terminate_process(proc)
@@ -1156,7 +1156,7 @@ class AutoAnalyzerModule:
         except Exception as exc:
             logger.error("Frida spawn error: %s", exc)
             print(f"\n{Colors.RED}[!] Error: {exc}{Colors.END}")
-            return events if events else []
+            return events if events else None
         finally:
             stop_event.set()
             _terminate_process(proc)
@@ -1253,7 +1253,9 @@ class AutoAnalyzerModule:
 
     def _detection_phase(self, duration: int = 30) -> Optional[List[DetectionEvent]]:
         self._cleanup_environment()
-        self.temp_script_path = Path(tempfile.mkstemp(suffix=".js", prefix="aa_detect_")[1])
+        _fd, _tmp = tempfile.mkstemp(suffix=".js", prefix="aa_detect_")
+        os.close(_fd)
+        self.temp_script_path = Path(_tmp)
         self.temp_script_path.write_text(BypassScripts.DETECTION_SCRIPT(), encoding="utf-8")
 
         logger.info("Detection script: %s", self.temp_script_path)
@@ -1383,10 +1385,6 @@ class AutoAnalyzerModule:
         print(f"\n{Colors.YELLOW}[*] Generating COMPREHENSIVE bypass for ALL protections{Colors.END}")
 
     # ------------------------------------------------------------------
-    # Script generation
-    # ------------------------------------------------------------------
-
-        # ------------------------------------------------------------------
     # Script generation — CONSOLIDATED (no duplicate hooks)
     # ------------------------------------------------------------------
 
@@ -1487,8 +1485,8 @@ class AutoAnalyzerModule:
             _java(self._gen_ssl_bypass_js(plan), "Consolidated SSL bypass")
 
         # Non-conflicting SSL modules (loaded from external JS files)
-        if plan.okhttp3:
-            _java(BypassScripts.OKHTTP3(), "OkHttp3")
+        if plan.okhttp3 or plan.okhttp2:
+            _java(BypassScripts.OKHTTP3(), "OkHttp3 / OkHttp2")
         if plan.network_security:
             _java(BypassScripts.NETWORK_SECURITY(), "NetworkSecurityConfig / PinSet")
         if plan.webview:
@@ -1544,6 +1542,110 @@ class AutoAnalyzerModule:
         print(f"\n{Colors.GREEN}[+] Script: {out}{Colors.END}")
         print(f"{Colors.CYAN}    Modules: {count} | Protections: {len(self.findings)}{Colors.END}")
         return out
+
+    @staticmethod
+    def _generate_dynamic_class_bypass(dynamic_classes: List[str]) -> str:
+        """Generate hooks for dynamically-detected custom protection classes.
+
+        These classes are usually obfuscated, so we hook suspicious method
+        names heuristically and return a safe default based on the overload's
+        declared return type.
+        """
+        cleaned: List[str] = []
+        seen: Set[str] = set()
+        for class_name in dynamic_classes:
+            if not class_name or class_name in seen:
+                continue
+            seen.add(class_name)
+            cleaned.append(class_name)
+
+        if not cleaned:
+            return ""
+
+        class_list_js = json.dumps(cleaned)
+        return f'''
+// ======================================================================
+// DYNAMIC / OBFUSCATED CLASS BYPASS
+// Auto-generated from analysis findings
+// ======================================================================
+(function() {{
+    var TARGET_CLASSES = {class_list_js};
+    var NAME_PATTERNS = [
+        /check/i, /detect/i, /verify/i, /isRoot/i, /isEmul/i,
+        /isDebug/i, /pin/i, /attest/i, /sign/i, /cert/i,
+        /trust/i, /integrity/i, /tamper/i, /secure/i
+    ];
+
+    function shouldHook(name) {{
+        if (!name || name.charAt(0) === "$") return false;
+        for (var i = 0; i < NAME_PATTERNS.length; i++) {{
+            if (NAME_PATTERNS[i].test(name)) return true;
+        }}
+        return false;
+    }}
+
+    function safeReturn(returnType, args) {{
+        if (!returnType) return null;
+        if (returnType === "void") return;
+        if (returnType === "boolean" || returnType === "java.lang.Boolean") return false;
+        if (returnType === "int" || returnType === "java.lang.Integer" ||
+            returnType === "short" || returnType === "java.lang.Short" ||
+            returnType === "byte" || returnType === "java.lang.Byte") return 0;
+        if (returnType === "long" || returnType === "java.lang.Long") return 0;
+        if (returnType === "float" || returnType === "java.lang.Float") return 0.0;
+        if (returnType === "double" || returnType === "java.lang.Double") return 0.0;
+        if (returnType === "char" || returnType === "java.lang.Character") return 0;
+        if (returnType === "java.lang.String") return "";
+        if (returnType.indexOf("[") === 0) {{
+            if (args && args.length > 0 && args[0] !== null) return args[0];
+            return null;
+        }}
+        if (returnType.indexOf("java.util.List") !== -1 ||
+            returnType.indexOf("java.util.Collection") !== -1) {{
+            try {{ return Java.use("java.util.ArrayList").$new(); }} catch(e) {{ return null; }}
+        }}
+        if (returnType.indexOf("java.util.Map") !== -1) {{
+            try {{ return Java.use("java.util.HashMap").$new(); }} catch(e) {{ return null; }}
+        }}
+        if (returnType.indexOf("javax.net.ssl") !== -1 ||
+            returnType.indexOf("java.security.cert") !== -1) {{
+            if (args && args.length > 0) return args[0];
+        }}
+        return null;
+    }}
+
+    TARGET_CLASSES.forEach(function(cn) {{
+        try {{
+            var C = Java.use(cn);
+            var declared = C.class.getDeclaredMethods();
+            var seenMethods = {{}};
+            var installed = 0;
+            for (var i = 0; i < declared.length; i++) {{
+                var methodName = declared[i].getName();
+                if (seenMethods[methodName]) continue;
+                seenMethods[methodName] = true;
+                if (!shouldHook(methodName)) continue;
+                try {{
+                    if (!C[methodName] || typeof C[methodName].overloads === "undefined") continue;
+                    C[methodName].overloads.forEach(function(ol) {{
+                        if (!ol || typeof ol.implementation === "undefined") return;
+                        var rt = (ol.returnType && ol.returnType.className) ? ol.returnType.className : "";
+                        ol.implementation = function() {{
+                            console.log("[AA] -> Dynamic bypass: " + cn + "." + methodName);
+                            return safeReturn(rt, arguments);
+                        }};
+                        installed += 1;
+                    }});
+                }} catch (hookErr) {{}}
+            }}
+            if (installed > 0) {{
+                console.log("[AA] + Dynamic class bypass installed: " + cn + " (" + installed + " overloads)");
+            }}
+        }} catch (classErr) {{
+            console.log("[AA] Dynamic class skipped: " + cn + " (" + classErr + ")");
+        }}
+    }});
+}})();'''
 
     # ==================================================================
     # Consolidated JS generators
@@ -2647,115 +2749,6 @@ console.log("[AA] Consolidated root/ADB/debug/PM bypass installed.");
 '''
 
     @staticmethod
-    def _generate_dynamic_class_bypass(dynamic_classes: List[str]) -> str:
-        """Generate hooks for dynamically-detected custom protection classes.
-
-        These classes are usually obfuscated, so we hook suspicious method
-        names heuristically and return a safe default based on the overload's
-        declared return type.
-        """
-        cleaned: List[str] = []
-        seen: Set[str] = set()
-        for class_name in dynamic_classes:
-            if not class_name or class_name in seen:
-                continue
-            seen.add(class_name)
-            cleaned.append(class_name)
-
-        if not cleaned:
-            return ""
-
-        class_list_js = json.dumps(cleaned)
-        return f'''
-// ======================================================================
-// DYNAMIC / OBFUSCATED CLASS BYPASS
-// Auto-generated from analysis findings
-// ======================================================================
-(function() {{
-    var TARGET_CLASSES = {class_list_js};
-    var NAME_PATTERNS = [
-        /check/i, /detect/i, /verify/i, /isRoot/i, /isEmul/i,
-        /isDebug/i, /pin/i, /attest/i, /sign/i, /cert/i,
-        /trust/i, /integrity/i, /tamper/i, /secure/i
-    ];
-
-    function shouldHook(name) {{
-        if (!name || name.charAt(0) === "$") return false;
-        for (var i = 0; i < NAME_PATTERNS.length; i++) {{
-            if (NAME_PATTERNS[i].test(name)) return true;
-        }}
-        return false;
-    }}
-
-    function safeReturn(returnType, args) {{
-        if (!returnType) return null;
-        if (returnType === "void") return;
-        if (returnType === "boolean" || returnType === "java.lang.Boolean") return false;
-        if (returnType === "int" || returnType === "java.lang.Integer" ||
-            returnType === "short" || returnType === "java.lang.Short" ||
-            returnType === "byte" || returnType === "java.lang.Byte") return 0;
-        if (returnType === "long" || returnType === "java.lang.Long") return 0;
-        if (returnType === "float" || returnType === "java.lang.Float") return 0.0;
-        if (returnType === "double" || returnType === "java.lang.Double") return 0.0;
-        if (returnType === "char" || returnType === "java.lang.Character") return 0;
-        if (returnType === "java.lang.String") return "";
-
-        if (returnType.indexOf("[") === 0) {{
-            if (args && args.length > 0 && args[0] !== null) return args[0];
-            return null;
-        }}
-        if (returnType.indexOf("java.util.List") !== -1 ||
-            returnType.indexOf("java.util.Collection") !== -1) {{
-            try {{ return Java.use("java.util.ArrayList").$new(); }} catch(e) {{ return null; }}
-        }}
-        if (returnType.indexOf("java.util.Map") !== -1) {{
-            try {{ return Java.use("java.util.HashMap").$new(); }} catch(e) {{ return null; }}
-        }}
-        if (returnType.indexOf("javax.net.ssl") !== -1 ||
-            returnType.indexOf("java.security.cert") !== -1) {{
-            if (args && args.length > 0) return args[0];
-        }}
-        return null;
-    }}
-
-    TARGET_CLASSES.forEach(function(cn) {{
-        try {{
-            var C = Java.use(cn);
-            var declared = C.class.getDeclaredMethods();
-            var seenMethods = {{}};
-            var installed = 0;
-
-            for (var i = 0; i < declared.length; i++) {{
-                var methodName = declared[i].getName();
-                if (seenMethods[methodName]) continue;
-                seenMethods[methodName] = true;
-                if (!shouldHook(methodName)) continue;
-
-                try {{
-                    if (!C[methodName] || typeof C[methodName].overloads === "undefined") continue;
-                    C[methodName].overloads.forEach(function(ol) {{
-                        if (!ol || typeof ol.implementation === "undefined") return;
-                        var rt = (ol.returnType && ol.returnType.className) ? ol.returnType.className : "";
-                        ol.implementation = function() {{
-                            console.log("[AA] -> Dynamic bypass: " + cn + "." + methodName);
-                            return safeReturn(rt, arguments);
-                        }};
-                        installed += 1;
-                    }});
-                }} catch (hookErr) {{}}
-            }}
-
-            if (installed > 0) {{
-                console.log("[AA] + Dynamic class bypass installed: " + cn + " (" + installed + " overloads)");
-            }}
-        }} catch (classErr) {{
-            console.log("[AA] Dynamic class skipped: " + cn + " (" + classErr + ")");
-        }}
-    }});
-}})();
-'''
-
-    @staticmethod
     def _gen_delayed_scans_js(plan: "BypassPlan") -> str:
         """Delayed class scans (2-3s) for custom TrustManagers and generic root methods."""
         return '''
@@ -2869,6 +2862,7 @@ setTimeout(function() {
                 return True
             else:
                 self.af._exit_program()
+                return False  # unreachable; guards -> bool contract if _exit_program is mocked
 
     def _execute_and_verify(self, script_path: Path) -> bool:
         self._print_phase("Verification")
@@ -2964,6 +2958,7 @@ setTimeout(function() {
             return True
         else:
             self.af._exit_program()
+            return False  # unreachable; guards -> bool contract if _exit_program is mocked
 
     def _merge_with_custom(self, generated_path: Path) -> Optional[bool]:
         print(f"\n{Colors.CYAN}Path to custom .js (B=back):{Colors.END}")
@@ -3016,6 +3011,7 @@ setTimeout(function() {
             return False
         else:
             self.af._exit_program()
+            return False  # unreachable; guards -> bool contract if _exit_program is mocked
 
     def _generate_generic_bypass(self) -> bool:
         print(f"\n{Colors.BLUE}[*] Generating generic bypass...{Colors.END}")
@@ -3303,6 +3299,8 @@ class FridaServerManager:
             except Exception as exc:
                 logger.error("Download error: %s", exc)
                 print(f"{Colors.RED}[!] Error: {exc}{Colors.END}")
+                if xz_path.exists():
+                    xz_path.unlink(missing_ok=True)
                 return None
         print(f"{Colors.RED}[!] Download failed{Colors.END}")
         return None
@@ -3406,7 +3404,7 @@ class AutoFrida:
     # UI helpers
     # ------------------------------------------------------------------
 
-    def _exit_program(self) -> None:
+    def _exit_program(self) -> NoReturn:
         print(f"\n{Colors.GREEN}{'=' * 60}{Colors.END}")
         print(f"{Colors.GREEN}  Auto Frida Session Complete - Goodbye!{Colors.END}")
         print(f"{Colors.GREEN}  Created by: {__author__}{Colors.END}")
@@ -3596,6 +3594,9 @@ class AutoFrida:
         return result
 
     def detect_architecture(self) -> bool:
+        if self.device is None:
+            logger.error("detect_architecture called before detect_device")
+            return False
         print(f"\n{Colors.BLUE}[*] Detecting CPU architecture...{Colors.END}")
         result = self.adb_command(["shell", "getprop", "ro.product.cpu.abi"])
         abi = result.stdout.strip()
@@ -3782,7 +3783,8 @@ class AutoFrida:
             if pid is None:
                 print(f"{Colors.GREEN}    [+] Stopped{Colors.END}")
                 return True
-            kill_cmd = f'su -c "kill -9 {pid}"' if self.device.is_rooted else f"kill -9 {pid}"
+            is_rooted = self.device.is_rooted if self.device is not None else False
+            kill_cmd = f'su -c "kill -9 {pid}"' if is_rooted else f"kill -9 {pid}"
             self.adb_command(["shell", kill_cmd], check=False, timeout=5)
             time.sleep(1)
             return self._get_app_pid(identifier) is None
