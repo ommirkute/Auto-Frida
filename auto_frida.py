@@ -2647,6 +2647,115 @@ console.log("[AA] Consolidated root/ADB/debug/PM bypass installed.");
 '''
 
     @staticmethod
+    def _generate_dynamic_class_bypass(dynamic_classes: List[str]) -> str:
+        """Generate hooks for dynamically-detected custom protection classes.
+
+        These classes are usually obfuscated, so we hook suspicious method
+        names heuristically and return a safe default based on the overload's
+        declared return type.
+        """
+        cleaned: List[str] = []
+        seen: Set[str] = set()
+        for class_name in dynamic_classes:
+            if not class_name or class_name in seen:
+                continue
+            seen.add(class_name)
+            cleaned.append(class_name)
+
+        if not cleaned:
+            return ""
+
+        class_list_js = json.dumps(cleaned)
+        return f'''
+// ======================================================================
+// DYNAMIC / OBFUSCATED CLASS BYPASS
+// Auto-generated from analysis findings
+// ======================================================================
+(function() {{
+    var TARGET_CLASSES = {class_list_js};
+    var NAME_PATTERNS = [
+        /check/i, /detect/i, /verify/i, /isRoot/i, /isEmul/i,
+        /isDebug/i, /pin/i, /attest/i, /sign/i, /cert/i,
+        /trust/i, /integrity/i, /tamper/i, /secure/i
+    ];
+
+    function shouldHook(name) {{
+        if (!name || name.charAt(0) === "$") return false;
+        for (var i = 0; i < NAME_PATTERNS.length; i++) {{
+            if (NAME_PATTERNS[i].test(name)) return true;
+        }}
+        return false;
+    }}
+
+    function safeReturn(returnType, args) {{
+        if (!returnType) return null;
+        if (returnType === "void") return;
+        if (returnType === "boolean" || returnType === "java.lang.Boolean") return false;
+        if (returnType === "int" || returnType === "java.lang.Integer" ||
+            returnType === "short" || returnType === "java.lang.Short" ||
+            returnType === "byte" || returnType === "java.lang.Byte") return 0;
+        if (returnType === "long" || returnType === "java.lang.Long") return 0;
+        if (returnType === "float" || returnType === "java.lang.Float") return 0.0;
+        if (returnType === "double" || returnType === "java.lang.Double") return 0.0;
+        if (returnType === "char" || returnType === "java.lang.Character") return 0;
+        if (returnType === "java.lang.String") return "";
+
+        if (returnType.indexOf("[") === 0) {{
+            if (args && args.length > 0 && args[0] !== null) return args[0];
+            return null;
+        }}
+        if (returnType.indexOf("java.util.List") !== -1 ||
+            returnType.indexOf("java.util.Collection") !== -1) {{
+            try {{ return Java.use("java.util.ArrayList").$new(); }} catch(e) {{ return null; }}
+        }}
+        if (returnType.indexOf("java.util.Map") !== -1) {{
+            try {{ return Java.use("java.util.HashMap").$new(); }} catch(e) {{ return null; }}
+        }}
+        if (returnType.indexOf("javax.net.ssl") !== -1 ||
+            returnType.indexOf("java.security.cert") !== -1) {{
+            if (args && args.length > 0) return args[0];
+        }}
+        return null;
+    }}
+
+    TARGET_CLASSES.forEach(function(cn) {{
+        try {{
+            var C = Java.use(cn);
+            var declared = C.class.getDeclaredMethods();
+            var seenMethods = {{}};
+            var installed = 0;
+
+            for (var i = 0; i < declared.length; i++) {{
+                var methodName = declared[i].getName();
+                if (seenMethods[methodName]) continue;
+                seenMethods[methodName] = true;
+                if (!shouldHook(methodName)) continue;
+
+                try {{
+                    if (!C[methodName] || typeof C[methodName].overloads === "undefined") continue;
+                    C[methodName].overloads.forEach(function(ol) {{
+                        if (!ol || typeof ol.implementation === "undefined") return;
+                        var rt = (ol.returnType && ol.returnType.className) ? ol.returnType.className : "";
+                        ol.implementation = function() {{
+                            console.log("[AA] -> Dynamic bypass: " + cn + "." + methodName);
+                            return safeReturn(rt, arguments);
+                        }};
+                        installed += 1;
+                    }});
+                }} catch (hookErr) {{}}
+            }}
+
+            if (installed > 0) {{
+                console.log("[AA] + Dynamic class bypass installed: " + cn + " (" + installed + " overloads)");
+            }}
+        }} catch (classErr) {{
+            console.log("[AA] Dynamic class skipped: " + cn + " (" + classErr + ")");
+        }}
+    }});
+}})();
+'''
+
+    @staticmethod
     def _gen_delayed_scans_js(plan: "BypassPlan") -> str:
         """Delayed class scans (2-3s) for custom TrustManagers and generic root methods."""
         return '''
